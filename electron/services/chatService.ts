@@ -29,6 +29,7 @@ export interface ChatSession {
   sortTimestamp: number  // 用于排序
   lastTimestamp: number  // 用于显示时间
   lastMsgType: number
+  messageCountHint?: number
   displayName?: string
   avatarUrl?: string
   lastMsgSender?: string
@@ -421,6 +422,21 @@ class ChatService {
 
         const summary = this.cleanString(row.summary || row.digest || row.last_msg || row.lastMsg || '')
         const lastMsgType = parseInt(row.last_msg_type || row.lastMsgType || '0', 10)
+        const messageCountHintRaw =
+          row.message_count ??
+          row.messageCount ??
+          row.msg_count ??
+          row.msgCount ??
+          row.total_count ??
+          row.totalCount ??
+          row.n_msg ??
+          row.nMsg ??
+          row.message_num ??
+          row.messageNum
+        const parsedMessageCountHint = Number(messageCountHintRaw)
+        const messageCountHint = Number.isFinite(parsedMessageCountHint) && parsedMessageCountHint >= 0
+          ? Math.floor(parsedMessageCountHint)
+          : undefined
 
         // 先尝试从缓存获取联系人信息（快速路径）
         let displayName = username
@@ -439,6 +455,7 @@ class ChatService {
           sortTimestamp: sortTs,
           lastTimestamp: lastTs,
           lastMsgType,
+          messageCountHint,
           displayName,
           avatarUrl,
           lastMsgSender: row.last_msg_sender,
@@ -812,23 +829,30 @@ class ChatService {
         }
       }
 
-      await this.forEachWithConcurrency(pendingSessionIds, 16, async (sessionId) => {
+      const batchSize = 320
+      for (let i = 0; i < pendingSessionIds.length; i += batchSize) {
+        const batch = pendingSessionIds.slice(i, i + batchSize)
+        let batchCounts: Record<string, number> = {}
         try {
-          const result = await wcdbService.getMessageCount(sessionId)
-          const nextCount = result.success && typeof result.count === 'number' ? result.count : 0
+          const result = await wcdbService.getMessageCounts(batch)
+          if (result.success && result.counts) {
+            batchCounts = result.counts
+          }
+        } catch {
+          // noop
+        }
+
+        const nowTs = Date.now()
+        for (const sessionId of batch) {
+          const nextCountRaw = batchCounts[sessionId]
+          const nextCount = Number.isFinite(nextCountRaw) ? Math.max(0, Math.floor(nextCountRaw)) : 0
           counts[sessionId] = nextCount
           this.sessionMessageCountCache.set(sessionId, {
             count: nextCount,
-            updatedAt: Date.now()
-          })
-        } catch {
-          counts[sessionId] = 0
-          this.sessionMessageCountCache.set(sessionId, {
-            count: 0,
-            updatedAt: Date.now()
+            updatedAt: nowTs
           })
         }
-      })
+      }
 
       return { success: true, counts }
     } catch (e) {

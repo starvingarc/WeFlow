@@ -624,6 +624,10 @@ function ExportPage() {
             const count = prev[session.username]
             if (typeof count === 'number') {
               next[session.username] = count
+              continue
+            }
+            if (typeof session.messageCountHint === 'number' && Number.isFinite(session.messageCountHint) && session.messageCountHint >= 0) {
+              next[session.username] = Math.floor(session.messageCountHint)
             }
           }
           return next
