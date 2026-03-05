@@ -93,7 +93,7 @@
   border-radius: 12px;
   padding: 12px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   align-items: stretch;
 
@@ -176,14 +176,13 @@
     flex-direction: column;
     gap: 4px;
     min-width: 0;
-    width: fit-content;
+    width: 100%;
     max-width: 100%;
-    justify-self: start;
     z-index: 40;
   }
 
   .layout-trigger {
-    width: auto;
+    width: 100%;
     padding: 8px 10px;
     border-radius: 8px;
     border: 1px solid var(--border-color);

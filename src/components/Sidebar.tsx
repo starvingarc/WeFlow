@@ -10,6 +10,7 @@ import './Sidebar.scss'
 interface SidebarUserProfile {
   wxid: string
   displayName: string
+  alias?: string
   avatarUrl?: string
 }
 
@@ -29,6 +30,7 @@ const readSidebarUserProfileCache = (): SidebarUserProfile | null => {
     return {
       wxid: parsed.wxid,
       displayName: parsed.displayName,
+      alias: parsed.alias,
       avatarUrl: parsed.avatarUrl
     }
   } catch {
@@ -193,6 +195,10 @@ function Sidebar() {
 
             if (fromContact) {
               patchUserProfile({ displayName: fromContact }, resolvedWxid)
+              // 同步补充微信号（alias）
+              if (myContact?.alias) {
+                patchUserProfile({ alias: myContact.alias }, resolvedWxid)
+              }
               return
             }
 
@@ -208,6 +214,10 @@ function Sidebar() {
             const bestName = enrichedDisplayName
             if (bestName) {
               patchUserProfile({ displayName: bestName }, resolvedWxid)
+            }
+            // 降级分支也补充微信号
+            if (myContact?.alias) {
+              patchUserProfile({ alias: myContact.alias }, resolvedWxid)
             }
           } catch (nameError) {
             console.error('加载侧边栏用户昵称失败:', nameError)
@@ -429,7 +439,7 @@ function Sidebar() {
           )}
           <div
             className={`sidebar-user-card ${isAccountMenuOpen ? 'menu-open' : ''}`}
-            title={collapsed ? `${userProfile.displayName}${userProfile.wxid ? `\n${userProfile.wxid}` : ''}` : undefined}
+            title={collapsed ? `${userProfile.displayName}${(userProfile.alias || userProfile.wxid) ? `\n${userProfile.alias || userProfile.wxid}` : ''}` : undefined}
             onClick={() => setIsAccountMenuOpen(prev => !prev)}
             role="button"
             tabIndex={0}
@@ -445,7 +455,7 @@ function Sidebar() {
             </div>
             <div className="user-meta">
               <div className="user-name">{userProfile.displayName}</div>
-              <div className="user-wxid">{userProfile.wxid || 'wxid 未识别'}</div>
+              <div className="user-wxid">{userProfile.alias || userProfile.wxid || 'wxid 未识别'}</div>
             </div>
             {!collapsed && (
               <span className={`user-menu-caret ${isAccountMenuOpen ? 'open' : ''}`}>

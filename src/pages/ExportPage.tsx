@@ -3301,6 +3301,8 @@ function ExportPage() {
         return (
           (contact.displayName || '').toLowerCase().includes(keyword) ||
           (contact.remark || '').toLowerCase().includes(keyword) ||
+          (contact.nickname || '').toLowerCase().includes(keyword) ||
+          (contact.alias || '').toLowerCase().includes(keyword) ||
           contact.username.toLowerCase().includes(keyword)
         )
       })
@@ -3841,7 +3843,7 @@ function ExportPage() {
           </div>
           <div className="contact-info">
             <div className="contact-name">{contact.displayName}</div>
-            <div className="contact-remark">{contact.username}</div>
+            <div className="contact-remark">{contact.alias || contact.username}</div>
           </div>
           <div className="row-message-count">
             <div className="row-message-stats">

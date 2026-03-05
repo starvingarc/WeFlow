@@ -136,6 +136,7 @@ export interface ContactInfo {
   displayName: string
   remark?: string
   nickname?: string
+  alias?: string
   avatarUrl?: string
   type: 'friend' | 'group' | 'official' | 'former_friend' | 'other'
 }
@@ -1392,6 +1393,7 @@ class ChatService {
           displayName,
           remark: row.remark || undefined,
           nickname: row.nick_name || undefined,
+          alias: row.alias || undefined,
           avatarUrl: undefined,
           type,
           lastContactTime: lastContactTimeMap.get(username) || 0
@@ -4630,9 +4632,23 @@ class ChatService {
       const result = await wcdbService.getContact(username)
       if (!result.success || !result.contact) return null
       const contact = result.contact as Record<string, any>
+      let alias = String(contact.alias || contact.Alias || '')
+      // DLL 有时不返回 alias 字段，补一条直接 SQL 查询兜底
+      if (!alias) {
+        try {
+          const safe = username.replace(/'/g, "''")
+          const sqlResult = await wcdbService.execQuery('contact', null,
+            `SELECT alias FROM contact WHERE username = '${safe}' LIMIT 1`)
+          if (sqlResult.success && Array.isArray(sqlResult.rows) && sqlResult.rows.length > 0) {
+            alias = String(sqlResult.rows[0]?.alias || sqlResult.rows[0]?.Alias || '')
+          }
+        } catch {
+          // 兜底失败不影响主流程
+        }
+      }
       return {
         username: String(contact.username || contact.user_name || contact.userName || username || ''),
-        alias: String(contact.alias || contact.Alias || ''),
+        alias,
         remark: String(contact.remark || contact.Remark || ''),
         // 兼容不同表结构字段，避免 nick_name 丢失导致侧边栏退化到 wxid。
         nickName: String(contact.nickName || contact.nick_name || contact.nickname || contact.NickName || '')

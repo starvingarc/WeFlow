@@ -112,7 +112,7 @@
     }
 
     span {
-      color: #fff;
+      color: var(--on-primary);
       font-size: 14px;
       font-weight: 600;
     }
@@ -183,7 +183,7 @@
 
   &.active {
     background: var(--primary);
-    color: white;
+    color: var(--on-primary);
   }
 }
 
