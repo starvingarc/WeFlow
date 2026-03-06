@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { RefreshCw, Search, X, Download, FolderOpen, FileJson, FileText, Image, CheckCircle, AlertCircle, Calendar, Users, Info, ChevronLeft, ChevronRight, Shield, ShieldOff, Loader2 } from 'lucide-react'
+import { RefreshCw, Search, X, Download, FolderOpen, FileJson, FileText, Image, CheckCircle, AlertCircle, Calendar, Info, ChevronLeft, ChevronRight, Shield, ShieldOff, Loader2 } from 'lucide-react'
 import './SnsPage.scss'
 import { SnsPost } from '../types/sns'
 import { SnsPostItem } from '../components/Sns/SnsPostItem'
@@ -100,7 +100,6 @@ export default function SnsPage() {
 
     // Filter states
     const [searchKeyword, setSearchKeyword] = useState('')
-    const [selectedUsernames, setSelectedUsernames] = useState<string[]>([])
     const [jumpTargetDate, setJumpTargetDate] = useState<Date | undefined>(undefined)
 
     // Contacts state
@@ -156,7 +155,6 @@ export default function SnsPage() {
     const contactsRef = useRef<Contact[]>([])
     const overviewStatsRef = useRef<SnsOverviewStats>(overviewStats)
     const overviewStatsStatusRef = useRef<OverviewStatsStatus>(overviewStatsStatus)
-    const selectedUsernamesRef = useRef<string[]>(selectedUsernames)
     const searchKeywordRef = useRef(searchKeyword)
     const jumpTargetDateRef = useRef<Date | undefined>(jumpTargetDate)
     const cacheScopeKeyRef = useRef('')
@@ -181,9 +179,6 @@ export default function SnsPage() {
     useEffect(() => {
         overviewStatsStatusRef.current = overviewStatsStatus
     }, [overviewStatsStatus])
-    useEffect(() => {
-        selectedUsernamesRef.current = selectedUsernames
-    }, [selectedUsernames])
     useEffect(() => {
         searchKeywordRef.current = searchKeyword
     }, [searchKeyword])
@@ -391,7 +386,7 @@ export default function SnsPage() {
     }, [currentUserProfile.avatarUrl, currentUserProfile.displayName, resolvedCurrentUserContact])
 
     const isDefaultViewNow = useCallback(() => {
-        return selectedUsernamesRef.current.length === 0 && !searchKeywordRef.current.trim() && !jumpTargetDateRef.current
+        return !searchKeywordRef.current.trim() && !jumpTargetDateRef.current
     }, [])
 
     const ensureSnsCacheScopeKey = useCallback(async () => {
@@ -577,7 +572,7 @@ export default function SnsPage() {
                     const result = await window.electronAPI.sns.getTimeline(
                         limit,
                         0,
-                        selectedUsernames,
+                        undefined,
                         searchKeyword,
                         topTs + 1,
                         undefined
@@ -618,7 +613,7 @@ export default function SnsPage() {
             const result = await window.electronAPI.sns.getTimeline(
                 limit,
                 0,
-                selectedUsernames,
+                undefined,
                 searchKeyword,
                 startTs, // default undefined
                 endTs
@@ -633,7 +628,7 @@ export default function SnsPage() {
                     // Check for newer items above topTs
                     const topTs = result.timeline[0]?.createTime || 0;
                     if (topTs > 0) {
-                        const checkResult = await window.electronAPI.sns.getTimeline(1, 0, selectedUsernames, searchKeyword, topTs + 1, undefined);
+                        const checkResult = await window.electronAPI.sns.getTimeline(1, 0, undefined, searchKeyword, topTs + 1, undefined);
                         setHasNewer(!!(checkResult.success && checkResult.timeline && checkResult.timeline.length > 0));
                     } else {
                         setHasNewer(false);
@@ -660,7 +655,7 @@ export default function SnsPage() {
             setLoadingNewer(false)
             loadingRef.current = false
         }
-    }, [jumpTargetDate, persistSnsPageCache, searchKeyword, selectedUsernames])
+    }, [jumpTargetDate, persistSnsPageCache, searchKeyword])
 
     const stopContactsCountHydration = useCallback((resetProgress = false) => {
         contactsCountHydrationTokenRef.current += 1
@@ -950,6 +945,14 @@ export default function SnsPage() {
         })
     }, [decodeHtmlEntities])
 
+    const openContactTimeline = useCallback((contact: Contact) => {
+        setAuthorTimelineTarget({
+            username: contact.username,
+            displayName: contact.displayName || contact.username,
+            avatarUrl: contact.avatarUrl
+        })
+    }, [])
+
     const handlePostDelete = useCallback((postId: string, username: string) => {
         setPosts(prev => {
             const next = prev.filter(p => p.id !== postId)
@@ -1017,7 +1020,7 @@ export default function SnsPage() {
             stopContactsCountHydration(true)
             setContacts([])
             setPosts([]); setHasMore(true); setHasNewer(false);
-            setSelectedUsernames([]); setSearchKeyword(''); setJumpTargetDate(undefined);
+            setSearchKeyword(''); setJumpTargetDate(undefined);
             void hydrateSnsPageCache()
             loadContacts();
             loadOverviewStats();
@@ -1032,7 +1035,7 @@ export default function SnsPage() {
             loadPosts({ reset: true })
         }, 500)
         return () => clearTimeout(timer)
-    }, [selectedUsernames, searchKeyword, jumpTargetDate, loadPosts])
+    }, [searchKeyword, jumpTargetDate, loadPosts])
 
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
         const { scrollTop, clientHeight, scrollHeight } = e.currentTarget
@@ -1251,21 +1254,16 @@ export default function SnsPage() {
                         )}
 
                         {!hasMore && posts.length > 0 && (
-                            <div className="status-indicator no-more">{
-                                selectedUsernames.length === 1 &&
-                                contacts.find(c => c.username === selectedUsernames[0])?.type === 'former_friend'
-                                    ? '在时间的长河里刻舟求剑'
-                                    : '或许过往已无可溯洄，但好在还有可以与你相遇的明天'
-                            }</div>
+                            <div className="status-indicator no-more">或许过往已无可溯洄，但好在还有可以与你相遇的明天</div>
                         )}
 
                         {!loading && posts.length === 0 && (
                             <div className="no-results">
                                 <div className="no-results-icon"><Search size={48} /></div>
                                 <p>未找到相关动态</p>
-                                {(selectedUsernames.length > 0 || searchKeyword || jumpTargetDate) && (
+                                {(searchKeyword || jumpTargetDate) && (
                                     <button onClick={() => {
-                                        setSearchKeyword(''); setSelectedUsernames([]); setJumpTargetDate(undefined);
+                                        setSearchKeyword(''); setJumpTargetDate(undefined);
                                     }} className="reset-inline">
                                         重置筛选条件
                                     </button>
@@ -1286,13 +1284,12 @@ export default function SnsPage() {
                             ? `${overviewStats.totalFriends} 位好友`
                             : undefined
                 }
-                selectedUsernames={selectedUsernames}
-                setSelectedUsernames={setSelectedUsernames}
                 contacts={contacts}
                 contactSearch={contactSearch}
                 setContactSearch={setContactSearch}
                 loading={contactsLoading}
                 contactsCountProgress={contactsCountProgress}
+                onOpenContactTimeline={openContactTimeline}
             />
 
             {/* Dialogs and Overlays */}
@@ -1437,17 +1434,10 @@ export default function SnsPage() {
 
                         <div className="export-dialog-body">
                             {/* 筛选条件提示 */}
-                            {(selectedUsernames.length > 0 || searchKeyword) && (
+                            {searchKeyword && (
                                 <div className="export-filter-info">
                                     <span className="filter-badge">筛选导出</span>
                                     {searchKeyword && <span className="filter-tag">关键词: "{searchKeyword}"</span>}
-                                    {selectedUsernames.length > 0 && (
-                                        <span className="filter-tag">
-                                            <Users size={12} />
-                                            {selectedUsernames.length} 个联系人
-                                            <span className="sync-hint">（同步自侧栏筛选）</span>
-                                        </span>
-                                    )}
                                 </div>
                             )}
 
@@ -1584,7 +1574,7 @@ export default function SnsPage() {
                                     {/* 同步提示 */}
                                     <div className="export-sync-hint">
                                         <Info size={14} />
-                                        <span>将同步主页面的联系人范围筛选及关键词搜索</span>
+                                        <span>将同步主页面的关键词搜索</span>
                                     </div>
 
                                     {/* 进度条 */}
@@ -1626,7 +1616,6 @@ export default function SnsPage() {
                                                     const result = await window.electronAPI.sns.exportTimeline({
                                                         outputDir: exportFolder,
                                                         format: exportFormat,
-                                                        usernames: selectedUsernames.length > 0 ? selectedUsernames : undefined,
                                                         keyword: searchKeyword || undefined,
                                                         exportImages,
                                                         exportLivePhotos,

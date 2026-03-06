@@ -20,43 +20,33 @@ interface SnsFilterPanelProps {
     searchKeyword: string
     setSearchKeyword: (val: string) => void
     totalFriendsLabel?: string
-    selectedUsernames: string[]
-    setSelectedUsernames: (val: string[]) => void
     contacts: Contact[]
     contactSearch: string
     setContactSearch: (val: string) => void
     loading?: boolean
     contactsCountProgress?: ContactsCountProgress
+    onOpenContactTimeline: (contact: Contact) => void
 }
 
 export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
     searchKeyword,
     setSearchKeyword,
     totalFriendsLabel,
-    selectedUsernames,
-    setSelectedUsernames,
     contacts,
     contactSearch,
     setContactSearch,
     loading,
-    contactsCountProgress
+    contactsCountProgress,
+    onOpenContactTimeline
 }) => {
     const filteredContacts = contacts.filter(c =>
         (c.displayName || '').toLowerCase().includes(contactSearch.toLowerCase()) ||
         c.username.toLowerCase().includes(contactSearch.toLowerCase())
     )
 
-    const toggleUserSelection = (username: string) => {
-        if (selectedUsernames.includes(username)) {
-            setSelectedUsernames(selectedUsernames.filter(u => u !== username))
-        } else {
-            setSelectedUsernames([...selectedUsernames, username])
-        }
-    }
-
     const clearFilters = () => {
         setSearchKeyword('')
-        setSelectedUsernames([])
+        setContactSearch('')
     }
 
     const getEmptyStateText = () => {
@@ -73,7 +63,7 @@ export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
         <aside className="sns-filter-panel">
             <div className="filter-header">
                 <h3>筛选条件</h3>
-                {(searchKeyword || selectedUsernames.length > 0) && (
+                {(searchKeyword || contactSearch) && (
                     <button className="reset-all-btn" onClick={clearFilters} title="重置所有筛选">
                         <RefreshCw size={14} />
                     </button>
@@ -106,9 +96,6 @@ export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
                     <div className="widget-header">
                         <User size={14} />
                         <span>联系人</span>
-                        {selectedUsernames.length > 0 && (
-                            <span className="badge">{selectedUsernames.length}</span>
-                        )}
                         {totalFriendsLabel && (
                             <span className="widget-header-summary">{totalFriendsLabel}</span>
                         )}
@@ -141,8 +128,8 @@ export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
                             return (
                             <div
                                 key={contact.username}
-                                className={`contact-row ${selectedUsernames.includes(contact.username) ? 'selected' : ''}`}
-                                onClick={() => toggleUserSelection(contact.username)}
+                                className="contact-row"
+                                onClick={() => onOpenContactTimeline(contact)}
                             >
                                 <Avatar src={contact.avatarUrl} name={contact.displayName} size={36} shape="rounded" />
                                 <div className="contact-meta">
