@@ -2873,18 +2873,14 @@
 
 .dialog-format-select {
   position: relative;
-  min-width: 220px;
   margin-left: auto;
 }
 
 .dialog-format-trigger {
-  width: 100%;
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 
 .dialog-format-trigger-label {
-  flex: 1;
-  min-width: 0;
   text-align: right;
 }
 
