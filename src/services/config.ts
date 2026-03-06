@@ -1,5 +1,6 @@
 // 配置服务 - 封装 Electron Store
 import { config } from './ipc'
+import type { ExportDefaultDateRangeConfig } from '../utils/exportDateRange'
 
 // 配置键名
 export const CONFIG_KEYS = {
@@ -335,13 +336,17 @@ export async function setExportDefaultFormat(format: string): Promise<void> {
 }
 
 // 获取导出默认时间范围
-export async function getExportDefaultDateRange(): Promise<string | null> {
+export async function getExportDefaultDateRange(): Promise<ExportDefaultDateRangeConfig | string | null> {
   const value = await config.get(CONFIG_KEYS.EXPORT_DEFAULT_DATE_RANGE)
-  return (value as string) || null
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object') {
+    return value as ExportDefaultDateRangeConfig
+  }
+  return null
 }
 
 // 设置导出默认时间范围
-export async function setExportDefaultDateRange(range: string): Promise<void> {
+export async function setExportDefaultDateRange(range: ExportDefaultDateRangeConfig | string): Promise<void> {
   await config.set(CONFIG_KEYS.EXPORT_DEFAULT_DATE_RANGE, range)
 }
 

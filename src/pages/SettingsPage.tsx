@@ -12,6 +12,14 @@ import {
   ShieldCheck, Fingerprint, Lock, KeyRound, Bell, Globe, BarChart2
 } from 'lucide-react'
 import { Avatar } from '../components/Avatar'
+import { ExportDateRangeDialog } from '../components/Export/ExportDateRangeDialog'
+import {
+  createDefaultExportDateRangeSelection,
+  getExportDateRangeLabel,
+  resolveExportDateRangeConfig,
+  serializeExportDateRangeConfig,
+  type ExportDateRangeSelection
+} from '../utils/exportDateRange'
 import './SettingsPage.scss'
 
 type SettingsTab = 'appearance' | 'notification' | 'database' | 'models' | 'export' | 'cache' | 'api' | 'security' | 'about' | 'analytics'
@@ -74,11 +82,9 @@ function SettingsPage() {
   const [wxidOptions, setWxidOptions] = useState<WxidOption[]>([])
   const [showWxidSelect, setShowWxidSelect] = useState(false)
   const [showExportFormatSelect, setShowExportFormatSelect] = useState(false)
-  const [showExportDateRangeSelect, setShowExportDateRangeSelect] = useState(false)
   const [showExportExcelColumnsSelect, setShowExportExcelColumnsSelect] = useState(false)
   const [showExportConcurrencySelect, setShowExportConcurrencySelect] = useState(false)
   const exportFormatDropdownRef = useRef<HTMLDivElement>(null)
-  const exportDateRangeDropdownRef = useRef<HTMLDivElement>(null)
   const exportExcelColumnsDropdownRef = useRef<HTMLDivElement>(null)
   const exportConcurrencyDropdownRef = useRef<HTMLDivElement>(null)
   const [cachePath, setCachePath] = useState('')
@@ -104,7 +110,8 @@ function SettingsPage() {
   const [autoTranscribeVoice, setAutoTranscribeVoice] = useState(false)
   const [transcribeLanguages, setTranscribeLanguages] = useState<string[]>(['zh'])
   const [exportDefaultFormat, setExportDefaultFormat] = useState('excel')
-  const [exportDefaultDateRange, setExportDefaultDateRange] = useState('today')
+  const [exportDefaultDateRange, setExportDefaultDateRange] = useState<ExportDateRangeSelection>(() => createDefaultExportDateRangeSelection())
+  const [isExportDateRangeDialogOpen, setIsExportDateRangeDialogOpen] = useState(false)
   const [exportDefaultMedia, setExportDefaultMedia] = useState(false)
   const [exportDefaultVoiceAsText, setExportDefaultVoiceAsText] = useState(false)
   const [exportDefaultExcelCompactColumns, setExportDefaultExcelCompactColumns] = useState(true)
@@ -209,9 +216,6 @@ function SettingsPage() {
       if (showExportFormatSelect && exportFormatDropdownRef.current && !exportFormatDropdownRef.current.contains(target)) {
         setShowExportFormatSelect(false)
       }
-      if (showExportDateRangeSelect && exportDateRangeDropdownRef.current && !exportDateRangeDropdownRef.current.contains(target)) {
-        setShowExportDateRangeSelect(false)
-      }
       if (showExportExcelColumnsSelect && exportExcelColumnsDropdownRef.current && !exportExcelColumnsDropdownRef.current.contains(target)) {
         setShowExportExcelColumnsSelect(false)
       }
@@ -221,7 +225,7 @@ function SettingsPage() {
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showExportFormatSelect, showExportDateRangeSelect, showExportExcelColumnsSelect, showExportConcurrencySelect])
+  }, [showExportFormatSelect, showExportExcelColumnsSelect, showExportConcurrencySelect])
 
   useEffect(() => {
     const removeDb = window.electronAPI.key.onDbKeyStatus((payload: { message: string; level: number }) => {
@@ -331,7 +335,7 @@ function SettingsPage() {
       setAutoTranscribeVoice(savedAutoTranscribe)
       setTranscribeLanguages(savedTranscribeLanguages)
       setExportDefaultFormat(savedExportDefaultFormat || 'excel')
-      setExportDefaultDateRange(savedExportDefaultDateRange || 'today')
+      setExportDefaultDateRange(resolveExportDateRangeConfig(savedExportDefaultDateRange))
       setExportDefaultMedia(savedExportDefaultMedia ?? false)
       setExportDefaultVoiceAsText(savedExportDefaultVoiceAsText ?? false)
       setExportDefaultExcelCompactColumns(savedExportDefaultExcelCompactColumns ?? true)
@@ -1557,13 +1561,6 @@ function SettingsPage() {
     { value: 'weclone', label: 'WeClone CSV', desc: 'WeClone 兼容字段格式（CSV）' },
     { value: 'sql', label: 'PostgreSQL', desc: '数据库脚本，便于导入到数据库' }
   ]
-  const exportDateRangeOptions = [
-    { value: 'today', label: '今天' },
-    { value: '7d', label: '最近7天' },
-    { value: '30d', label: '最近30天' },
-    { value: '90d', label: '最近90天' },
-    { value: 'all', label: '全部时间' }
-  ]
   const exportExcelColumnOptions = [
     { value: 'compact', label: '精简列', desc: '序号、时间、发送者身份、消息类型、内容' },
     { value: 'full', label: '完整列', desc: '含发送者昵称/微信ID/备注' }
@@ -1585,7 +1582,7 @@ function SettingsPage() {
   const renderExportTab = () => {
     const exportExcelColumnsValue = exportDefaultExcelCompactColumns ? 'compact' : 'full'
     const exportFormatLabel = getOptionLabel(exportFormatOptions, exportDefaultFormat)
-    const exportDateRangeLabel = getOptionLabel(exportDateRangeOptions, exportDefaultDateRange)
+    const exportDateRangeLabel = getExportDateRangeLabel(exportDefaultDateRange)
     const exportExcelColumnsLabel = getOptionLabel(exportExcelColumnOptions, exportExcelColumnsValue)
     const exportConcurrencyLabel = String(exportDefaultConcurrency)
 
@@ -1600,7 +1597,7 @@ function SettingsPage() {
               className={`select-trigger ${showExportFormatSelect ? 'open' : ''}`}
               onClick={() => {
                 setShowExportFormatSelect(!showExportFormatSelect)
-                setShowExportDateRangeSelect(false)
+                setIsExportDateRangeDialogOpen(false)
                 setShowExportExcelColumnsSelect(false)
                 setShowExportConcurrencySelect(false)
               }}
@@ -1634,41 +1631,34 @@ function SettingsPage() {
         <div className="form-group">
           <label>默认导出时间范围</label>
           <span className="form-hint">控制导出页面的默认时间选择</span>
-          <div className="select-field" ref={exportDateRangeDropdownRef}>
+          <div className="settings-time-range-field">
             <button
               type="button"
-              className={`select-trigger ${showExportDateRangeSelect ? 'open' : ''}`}
+              className={`settings-time-range-trigger ${isExportDateRangeDialogOpen ? 'open' : ''}`}
               onClick={() => {
-                setShowExportDateRangeSelect(!showExportDateRangeSelect)
                 setShowExportFormatSelect(false)
                 setShowExportExcelColumnsSelect(false)
                 setShowExportConcurrencySelect(false)
+                setIsExportDateRangeDialogOpen(true)
               }}
             >
-              <span className="select-value">{exportDateRangeLabel}</span>
-              <ChevronDown size={16} />
+              <span className="settings-time-range-value">{exportDateRangeLabel}</span>
+              <span className="settings-time-range-arrow">&gt;</span>
             </button>
-            {showExportDateRangeSelect && (
-              <div className="select-dropdown">
-                {exportDateRangeOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`select-option ${exportDefaultDateRange === option.value ? 'active' : ''}`}
-                    onClick={async () => {
-                      setExportDefaultDateRange(option.value)
-                      await configService.setExportDefaultDateRange(option.value)
-                      showMessage('已更新默认导出时间范围', true)
-                      setShowExportDateRangeSelect(false)
-                    }}
-                  >
-                    <span className="option-label">{option.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
+
+        <ExportDateRangeDialog
+          open={isExportDateRangeDialogOpen}
+          value={exportDefaultDateRange}
+          onClose={() => setIsExportDateRangeDialogOpen(false)}
+          onConfirm={async (nextSelection) => {
+            setExportDefaultDateRange(nextSelection)
+            await configService.setExportDefaultDateRange(serializeExportDateRangeConfig(nextSelection))
+            showMessage('已更新默认导出时间范围', true)
+            setIsExportDateRangeDialogOpen(false)
+          }}
+        />
 
         <div className="form-group">
           <label>默认导出媒体文件</label>
@@ -1726,7 +1716,7 @@ function SettingsPage() {
               onClick={() => {
                 setShowExportExcelColumnsSelect(!showExportExcelColumnsSelect)
                 setShowExportFormatSelect(false)
-                setShowExportDateRangeSelect(false)
+                setIsExportDateRangeDialogOpen(false)
                 setShowExportConcurrencySelect(false)
               }}
             >
@@ -1767,7 +1757,7 @@ function SettingsPage() {
               onClick={() => {
                 setShowExportConcurrencySelect(!showExportConcurrencySelect)
                 setShowExportFormatSelect(false)
-                setShowExportDateRangeSelect(false)
+                setIsExportDateRangeDialogOpen(false)
                 setShowExportExcelColumnsSelect(false)
               }}
             >
