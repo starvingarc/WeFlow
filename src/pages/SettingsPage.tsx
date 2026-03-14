@@ -897,6 +897,21 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
     }
   }
 
+  const handleClearLog = async () => {
+    const confirmed = window.confirm('确定清空 wcdb.log 吗？')
+    if (!confirmed) return
+    try {
+      const result = await window.electronAPI.log.clear()
+      if (!result.success) {
+        showMessage(result.error || '清空日志失败', false)
+        return
+      }
+      showMessage('日志已清空', true)
+    } catch (e: any) {
+      showMessage(`清空日志失败: ${e}`, false)
+    }
+  }
+
   const handleClearAnalyticsCache = async () => {
     if (isClearingCache) return
     setIsClearingAnalyticsCache(true)
@@ -1426,6 +1441,9 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
           </button>
           <button className="btn btn-secondary" onClick={handleCopyLog}>
             <Copy size={16} /> 复制日志内容
+          </button>
+          <button className="btn btn-secondary" onClick={handleClearLog}>
+            <Trash2 size={16} /> 清空日志
           </button>
         </div>
       </div>

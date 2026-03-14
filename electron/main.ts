@@ -972,6 +972,17 @@ function registerIpcHandlers() {
     }
   })
 
+  ipcMain.handle('log:clear', async () => {
+    try {
+      const logPath = join(app.getPath('userData'), 'logs', 'wcdb.log')
+      await mkdir(dirname(logPath), { recursive: true })
+      await writeFile(logPath, '', 'utf8')
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
   ipcMain.handle('diagnostics:getExportCardLogs', async (_, options?: { limit?: number }) => {
     return exportCardDiagnosticsService.snapshot(options?.limit)
   })
