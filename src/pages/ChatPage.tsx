@@ -2691,6 +2691,7 @@ function ChatPage(props: ChatPageProps) {
         setGlobalMsgResults([])
       } finally {
         if (gen === globalMsgSearchGenRef.current) setGlobalMsgSearching(false)
+        setGlobalMsgSearching(false)
       }
     }, 500)
   }, [])
@@ -2702,6 +2703,7 @@ function ChatPage(props: ChatPageProps) {
     setGlobalMsgQuery('')
     setGlobalMsgResults([])
     setGlobalMsgSearching(false)
+    if (globalMsgSearchTimerRef.current) clearTimeout(globalMsgSearchTimerRef.current)
   }, [])
 
   // 滚动加载更多 + 显示/隐藏回到底部按钮（优化：节流，避免频繁执行）
@@ -4003,44 +4005,11 @@ function ChatPage(props: ChatPageProps) {
                     <X size={12} />
                   </button>
                 )}
-                {globalMsgSearching && <Loader2 size={12} className="spin" style={{ flexShrink: 0 }} />}
               </div>
               <button className="icon-btn refresh-btn" onClick={handleRefresh} disabled={isLoadingSessions || isRefreshingSessions}>
                 <RefreshCw size={16} className={(isLoadingSessions || isRefreshingSessions) ? 'spin' : ''} />
               </button>
             </div>
-            {/* 全局消息搜索结果面板 */}
-            {showGlobalMsgSearch && (
-              <div className="global-msg-search-results">
-                {globalMsgSearching && (
-                  <div className="global-msg-searching"><Loader2 size={14} className="spin" /> 搜索中...</div>
-                )}
-                {!globalMsgSearching && globalMsgQuery && globalMsgResults.length === 0 && (
-                  <div className="global-msg-empty">没有找到相关消息</div>
-                )}
-                {globalMsgResults.map((msg, i) => {
-                  const sid = msg._session_id || msg.username || ''
-                  const sessionObj = sessions.find(s => s.username === sid)
-                  const sessionName = sessionObj?.displayName || sid || '未知会话'
-                  const content = (msg.content || msg.strContent || msg.message_content || '').slice(0, 60)
-                  const ts = msg.createTime || msg.create_time
-                  const timeStr = ts ? new Date(ts * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
-                  return (
-                    <div key={i} className="global-msg-result-item" onClick={() => {
-                      if (sessionObj) {
-                        handleSelectSession(sessionObj)
-                        handleCloseGlobalMsgSearch()
-                        setSearchKeyword('')
-                      }
-                    }}>
-                      <div className="global-msg-result-session">{sessionName}</div>
-                      <div className="global-msg-result-content">{content}</div>
-                      <div className="global-msg-result-time">{timeStr}</div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
           </div>
           {/* 折叠群 header */}
           <div className="session-header-panel folded-header">
@@ -4079,6 +4048,39 @@ function ChatPage(props: ChatPageProps) {
           </div>
         ) : (
           <div className={`session-list-viewport ${foldedView ? 'folded' : ''}`}>
+            {/* 全局消息搜索结果 */}
+            {showGlobalMsgSearch ? (
+              <div className="global-msg-search-results">
+                {globalMsgSearching && (
+                  <div className="global-msg-searching"><Loader2 size={14} className="spin" /> 搜索中...</div>
+                )}
+                {!globalMsgSearching && globalMsgQuery && globalMsgResults.length === 0 && (
+                  <div className="global-msg-empty">没有找到相关消息</div>
+                )}
+                {!globalMsgSearching && globalMsgResults.map((msg, i) => {
+                  const sid = msg._session_id || msg.username || ''
+                  const sessionObj = sessions.find(s => s.username === sid)
+                  const sessionName = sessionObj?.displayName || sid || '未知会话'
+                  const content = (msg.content || msg.strContent || msg.message_content || '').slice(0, 60)
+                  const ts = msg.createTime || msg.create_time
+                  const timeStr = ts ? new Date(ts * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
+                  return (
+                    <div key={i} className="global-msg-result-item" onClick={() => {
+                      if (sessionObj) {
+                        handleSelectSession(sessionObj)
+                        handleCloseGlobalMsgSearch()
+                        setSearchKeyword('')
+                      }
+                    }}>
+                      <div className="global-msg-result-session">{sessionName}</div>
+                      <div className="global-msg-result-content">{content}</div>
+                      <div className="global-msg-result-time">{timeStr}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+            <>
             {/* 普通会话列表 */}
             <div className="session-list-panel main-panel">
               {Array.isArray(filteredSessions) && filteredSessions.length > 0 ? (
@@ -4136,6 +4138,8 @@ function ChatPage(props: ChatPageProps) {
                 </div>
               )}
             </div>
+            </>
+            )}
           </div>
         )}
 
@@ -4515,12 +4519,12 @@ function ChatPage(props: ChatPageProps) {
                                 <div className="group-member-badges">
                                   {member.isOwner && (
                                     <span className="member-flag owner" title="群主">
-                                      <Crown size={12} />
+                                      群主
                                     </span>
                                   )}
                                   {member.isFriend && (
                                     <span className="member-flag friend" title="好友">
-                                      <UserCheck size={12} />
+                                      好友
                                     </span>
                                   )}
                                 </div>

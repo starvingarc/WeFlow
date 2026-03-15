@@ -3045,13 +3045,15 @@
   }
 
   .member-flag {
-    width: 18px;
     height: 18px;
+    padding: 0 6px;
     border-radius: 9999px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border-color);
+    font-size: 11px;
+    white-space: nowrap;
 
     &.owner {
       color: #f59e0b;
@@ -4702,10 +4704,9 @@
 
 // 全局消息搜索结果面板
 .global-msg-search-results {
-  max-height: 320px;
+  flex: 1;
   overflow-y: auto;
   background: var(--bg-primary);
-  border-top: 1px solid var(--border-color);
 
   .global-msg-searching,
   .global-msg-empty {
