@@ -92,7 +92,6 @@
     "linux": {
       "icon": "public/icon.png",
       "target": [
-        "AppImage",
         "pacman",
         "deb",
         "tar.gz"
