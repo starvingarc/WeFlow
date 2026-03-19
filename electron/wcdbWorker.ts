@@ -200,8 +200,14 @@ if (parentPort) {
                 case 'resolveImageHardlink':
                     result = await core.resolveImageHardlink(payload.md5, payload.accountDir)
                     break
+                case 'resolveImageHardlinkBatch':
+                    result = await core.resolveImageHardlinkBatch(payload.requests)
+                    break
                 case 'resolveVideoHardlinkMd5':
                     result = await core.resolveVideoHardlinkMd5(payload.md5, payload.dbPath)
+                    break
+                case 'resolveVideoHardlinkMd5Batch':
+                    result = await core.resolveVideoHardlinkMd5Batch(payload.requests)
                     break
                 case 'getSnsTimeline':
                     result = await core.getSnsTimeline(payload.limit, payload.offset, payload.usernames, payload.keyword, payload.startTime, payload.endTime)

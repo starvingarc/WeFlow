@@ -505,8 +505,20 @@ export class WcdbService {
     return this.callWorker('resolveImageHardlink', { md5, accountDir })
   }
 
+  async resolveImageHardlinkBatch(
+    requests: Array<{ md5: string; accountDir?: string }>
+  ): Promise<{ success: boolean; rows?: Array<{ index: number; md5: string; success: boolean; data?: any; error?: string }>; error?: string }> {
+    return this.callWorker('resolveImageHardlinkBatch', { requests })
+  }
+
   async resolveVideoHardlinkMd5(md5: string, dbPath?: string): Promise<{ success: boolean; data?: any; error?: string }> {
     return this.callWorker('resolveVideoHardlinkMd5', { md5, dbPath })
+  }
+
+  async resolveVideoHardlinkMd5Batch(
+    requests: Array<{ md5: string; dbPath?: string }>
+  ): Promise<{ success: boolean; rows?: Array<{ index: number; md5: string; success: boolean; data?: any; error?: string }>; error?: string }> {
+    return this.callWorker('resolveVideoHardlinkMd5Batch', { requests })
   }
 
   /**

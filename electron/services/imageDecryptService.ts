@@ -55,6 +55,17 @@ type DecryptResult = {
   isThumb?: boolean  // 是否是缩略图（没有高清图时返回缩略图）
 }
 
+type CachedImagePayload = {
+  sessionId?: string
+  imageMd5?: string
+  imageDatName?: string
+  preferFilePath?: boolean
+}
+
+type DecryptImagePayload = CachedImagePayload & {
+  force?: boolean
+}
+
 export class ImageDecryptService {
   private configService = new ConfigService()
   private resolvedCache = new Map<string, string>()
@@ -100,7 +111,7 @@ export class ImageDecryptService {
     }
   }
 
-  async resolveCachedImage(payload: { sessionId?: string; imageMd5?: string; imageDatName?: string }): Promise<DecryptResult & { hasUpdate?: boolean }> {
+  async resolveCachedImage(payload: CachedImagePayload): Promise<DecryptResult & { hasUpdate?: boolean }> {
     await this.ensureCacheIndexed()
     const cacheKeys = this.getCacheKeys(payload)
     const cacheKey = cacheKeys[0]
@@ -110,7 +121,7 @@ export class ImageDecryptService {
     for (const key of cacheKeys) {
       const cached = this.resolvedCache.get(key)
       if (cached && existsSync(cached) && this.isImageFile(cached)) {
-        const dataUrl = this.fileToDataUrl(cached)
+        const localPath = this.resolveLocalPathForPayload(cached, payload.preferFilePath)
         const isThumb = this.isThumbnailPath(cached)
         const hasUpdate = isThumb ? (this.updateFlags.get(key) ?? false) : false
         if (isThumb) {
@@ -118,8 +129,8 @@ export class ImageDecryptService {
         } else {
           this.updateFlags.delete(key)
         }
-        this.emitCacheResolved(payload, key, dataUrl || this.filePathToUrl(cached))
-        return { success: true, localPath: dataUrl || this.filePathToUrl(cached), hasUpdate }
+        this.emitCacheResolved(payload, key, this.resolveEmitPath(cached, payload.preferFilePath))
+        return { success: true, localPath, hasUpdate }
       }
       if (cached && !this.isImageFile(cached)) {
         this.resolvedCache.delete(key)
@@ -130,7 +141,7 @@ export class ImageDecryptService {
       const existing = this.findCachedOutput(key, false, payload.sessionId)
       if (existing) {
         this.cacheResolvedPaths(key, payload.imageMd5, payload.imageDatName, existing)
-        const dataUrl = this.fileToDataUrl(existing)
+        const localPath = this.resolveLocalPathForPayload(existing, payload.preferFilePath)
         const isThumb = this.isThumbnailPath(existing)
         const hasUpdate = isThumb ? (this.updateFlags.get(key) ?? false) : false
         if (isThumb) {
@@ -138,15 +149,15 @@ export class ImageDecryptService {
         } else {
           this.updateFlags.delete(key)
         }
-        this.emitCacheResolved(payload, key, dataUrl || this.filePathToUrl(existing))
-        return { success: true, localPath: dataUrl || this.filePathToUrl(existing), hasUpdate }
+        this.emitCacheResolved(payload, key, this.resolveEmitPath(existing, payload.preferFilePath))
+        return { success: true, localPath, hasUpdate }
       }
     }
     this.logInfo('未找到缓存', { md5: payload.imageMd5, datName: payload.imageDatName })
     return { success: false, error: '未找到缓存图片' }
   }
 
-  async decryptImage(payload: { sessionId?: string; imageMd5?: string; imageDatName?: string; force?: boolean }): Promise<DecryptResult> {
+  async decryptImage(payload: DecryptImagePayload): Promise<DecryptResult> {
     await this.ensureCacheIndexed()
     const cacheKeys = this.getCacheKeys(payload)
     const cacheKey = cacheKeys[0]
@@ -160,9 +171,8 @@ export class ImageDecryptService {
         if (cached && existsSync(cached) && this.isImageFile(cached) && !this.isThumbnailPath(cached)) {
           this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, cached)
           this.clearUpdateFlags(cacheKey, payload.imageMd5, payload.imageDatName)
-          const dataUrl = this.fileToDataUrl(cached)
-          const localPath = dataUrl || this.filePathToUrl(cached)
-          this.emitCacheResolved(payload, cacheKey, localPath)
+          const localPath = this.resolveLocalPathForPayload(cached, payload.preferFilePath)
+          this.emitCacheResolved(payload, cacheKey, this.resolveEmitPath(cached, payload.preferFilePath))
           return { success: true, localPath }
         }
         if (cached && !this.isImageFile(cached)) {
@@ -175,9 +185,8 @@ export class ImageDecryptService {
         if (!existingHd || this.isThumbnailPath(existingHd)) continue
         this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, existingHd)
         this.clearUpdateFlags(cacheKey, payload.imageMd5, payload.imageDatName)
-        const dataUrl = this.fileToDataUrl(existingHd)
-        const localPath = dataUrl || this.filePathToUrl(existingHd)
-        this.emitCacheResolved(payload, cacheKey, localPath)
+        const localPath = this.resolveLocalPathForPayload(existingHd, payload.preferFilePath)
+        this.emitCacheResolved(payload, cacheKey, this.resolveEmitPath(existingHd, payload.preferFilePath))
         return { success: true, localPath }
       }
     }
@@ -185,9 +194,8 @@ export class ImageDecryptService {
     if (!payload.force) {
       const cached = this.resolvedCache.get(cacheKey)
       if (cached && existsSync(cached) && this.isImageFile(cached)) {
-        const dataUrl = this.fileToDataUrl(cached)
-        const localPath = dataUrl || this.filePathToUrl(cached)
-        this.emitCacheResolved(payload, cacheKey, localPath)
+        const localPath = this.resolveLocalPathForPayload(cached, payload.preferFilePath)
+        this.emitCacheResolved(payload, cacheKey, this.resolveEmitPath(cached, payload.preferFilePath))
         return { success: true, localPath }
       }
       if (cached && !this.isImageFile(cached)) {
@@ -207,8 +215,44 @@ export class ImageDecryptService {
     }
   }
 
+  async preloadImageHardlinkMd5s(md5List: string[]): Promise<void> {
+    const normalizedList = Array.from(
+      new Set((md5List || []).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))
+    )
+    if (normalizedList.length === 0) return
+
+    const wxid = this.configService.get('myWxid')
+    const dbPath = this.configService.get('dbPath')
+    if (!wxid || !dbPath) return
+
+    const accountDir = this.resolveAccountDir(dbPath, wxid)
+    if (!accountDir) return
+
+    try {
+      const ready = await this.ensureWcdbReady()
+      if (!ready) return
+      const requests = normalizedList.map((md5) => ({ md5, accountDir }))
+      const result = await wcdbService.resolveImageHardlinkBatch(requests)
+      if (!result.success || !Array.isArray(result.rows)) return
+
+      for (const row of result.rows) {
+        const md5 = String(row?.md5 || '').trim().toLowerCase()
+        if (!md5) continue
+        const fullPath = String(row?.data?.full_path || '').trim()
+        if (!fullPath || !existsSync(fullPath)) continue
+        this.cacheDatPath(accountDir, md5, fullPath)
+        const fileName = String(row?.data?.file_name || '').trim().toLowerCase()
+        if (fileName) {
+          this.cacheDatPath(accountDir, fileName, fullPath)
+        }
+      }
+    } catch {
+      // ignore preload failures
+    }
+  }
+
   private async decryptImageInternal(
-    payload: { sessionId?: string; imageMd5?: string; imageDatName?: string; force?: boolean },
+    payload: DecryptImagePayload,
     cacheKey: string
   ): Promise<DecryptResult> {
     this.logInfo('开始解密图片', { md5: payload.imageMd5, datName: payload.imageDatName, force: payload.force })
@@ -248,10 +292,9 @@ export class ImageDecryptService {
 
       if (!extname(datPath).toLowerCase().includes('dat')) {
         this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, datPath)
-        const dataUrl = this.fileToDataUrl(datPath)
-        const localPath = dataUrl || this.filePathToUrl(datPath)
+        const localPath = this.resolveLocalPathForPayload(datPath, payload.preferFilePath)
         const isThumb = this.isThumbnailPath(datPath)
-        this.emitCacheResolved(payload, cacheKey, localPath)
+        this.emitCacheResolved(payload, cacheKey, this.resolveEmitPath(datPath, payload.preferFilePath))
         return { success: true, localPath, isThumb }
       }
 
@@ -263,10 +306,9 @@ export class ImageDecryptService {
         // 如果要求高清但找到的是缩略图，继续解密高清图
         if (!(payload.force && !isHd)) {
           this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, existing)
-          const dataUrl = this.fileToDataUrl(existing)
-          const localPath = dataUrl || this.filePathToUrl(existing)
+          const localPath = this.resolveLocalPathForPayload(existing, payload.preferFilePath)
           const isThumb = this.isThumbnailPath(existing)
-          this.emitCacheResolved(payload, cacheKey, localPath)
+          this.emitCacheResolved(payload, cacheKey, this.resolveEmitPath(existing, payload.preferFilePath))
           return { success: true, localPath, isThumb }
         }
       }
@@ -326,9 +368,11 @@ export class ImageDecryptService {
       if (!isThumb) {
         this.clearUpdateFlags(cacheKey, payload.imageMd5, payload.imageDatName)
       }
-      const dataUrl = this.bufferToDataUrl(decrypted, finalExt)
-      const localPath = dataUrl || this.filePathToUrl(outputPath)
-      this.emitCacheResolved(payload, cacheKey, localPath)
+      const localPath = payload.preferFilePath
+        ? outputPath
+        : (this.bufferToDataUrl(decrypted, finalExt) || this.filePathToUrl(outputPath))
+      const emitPath = this.resolveEmitPath(outputPath, payload.preferFilePath)
+      this.emitCacheResolved(payload, cacheKey, emitPath)
       return { success: true, localPath, isThumb }
     } catch (e) {
       this.logError('解密失败', e, { md5: payload.imageMd5, datName: payload.imageDatName })
@@ -1492,6 +1536,16 @@ export class ImageDecryptService {
     const mimeType = this.mimeFromExtension(ext)
     if (!mimeType) return null
     return `data:${mimeType};base64,${buffer.toString('base64')}`
+  }
+
+  private resolveLocalPathForPayload(filePath: string, preferFilePath?: boolean): string {
+    if (preferFilePath) return filePath
+    return this.resolveEmitPath(filePath, false)
+  }
+
+  private resolveEmitPath(filePath: string, preferFilePath?: boolean): string {
+    if (preferFilePath) return this.filePathToUrl(filePath)
+    return this.fileToDataUrl(filePath) || this.filePathToUrl(filePath)
   }
 
   private fileToDataUrl(filePath: string): string | null {

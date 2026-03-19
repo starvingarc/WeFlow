@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Search, MessageSquare, AlertCircle, Loader2, RefreshCw, X, ChevronDown, ChevronLeft, Info, Calendar, Database, Hash, Play, Pause, Image as ImageIcon, Link, Mic, CheckCircle, Copy, Check, CheckSquare, Download, BarChart3, Edit2, Trash2, BellOff, Users, FolderClosed, UserCheck, Crown, Aperture } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { useShallow } from 'zustand/react/shallow'
 import { useChatStore } from '../stores/chatStore'
 import { useBatchTranscribeStore } from '../stores/batchTranscribeStore'
 import { useBatchImageDecryptStore } from '../stores/batchImageDecryptStore'
@@ -774,7 +776,6 @@ function ChatPage(props: ChatPageProps) {
     isConnecting,
     connectionError,
     sessions,
-    filteredSessions,
     currentSessionId,
     isLoadingSessions,
     messages,
@@ -786,7 +787,6 @@ function ChatPage(props: ChatPageProps) {
     setConnecting,
     setConnectionError,
     setSessions,
-    setFilteredSessions,
     setCurrentSession,
     setLoadingSessions,
     setMessages,
@@ -797,11 +797,46 @@ function ChatPage(props: ChatPageProps) {
     hasMoreLater,
     setHasMoreLater,
     setSearchKeyword
-  } = useChatStore()
+  } = useChatStore(useShallow((state) => ({
+    isConnected: state.isConnected,
+    isConnecting: state.isConnecting,
+    connectionError: state.connectionError,
+    sessions: state.sessions,
+    currentSessionId: state.currentSessionId,
+    isLoadingSessions: state.isLoadingSessions,
+    messages: state.messages,
+    isLoadingMessages: state.isLoadingMessages,
+    isLoadingMore: state.isLoadingMore,
+    hasMoreMessages: state.hasMoreMessages,
+    searchKeyword: state.searchKeyword,
+    setConnected: state.setConnected,
+    setConnecting: state.setConnecting,
+    setConnectionError: state.setConnectionError,
+    setSessions: state.setSessions,
+    setCurrentSession: state.setCurrentSession,
+    setLoadingSessions: state.setLoadingSessions,
+    setMessages: state.setMessages,
+    appendMessages: state.appendMessages,
+    setLoadingMessages: state.setLoadingMessages,
+    setLoadingMore: state.setLoadingMore,
+    setHasMoreMessages: state.setHasMoreMessages,
+    hasMoreLater: state.hasMoreLater,
+    setHasMoreLater: state.setHasMoreLater,
+    setSearchKeyword: state.setSearchKeyword
+  })))
 
   const messageListRef = useRef<HTMLDivElement>(null)
+  const [messageListScrollParent, setMessageListScrollParent] = useState<HTMLDivElement | null>(null)
+  const messageVirtuosoRef = useRef<VirtuosoHandle | null>(null)
+  const visibleMessageRangeRef = useRef<{ startIndex: number; endIndex: number }>({ startIndex: 0, endIndex: 0 })
+  const topRangeLoadLockRef = useRef(false)
+  const bottomRangeLoadLockRef = useRef(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
+  const handleMessageListScrollParentRef = useCallback((node: HTMLDivElement | null) => {
+    messageListRef.current = node
+    setMessageListScrollParent(node)
+  }, [])
 
   const getMessageKey = useCallback((msg: Message): string => {
     if (msg.messageKey) return msg.messageKey
@@ -857,6 +892,7 @@ function ChatPage(props: ChatPageProps) {
   )
   const [standaloneInitialLoadRequested, setStandaloneInitialLoadRequested] = useState(false)
   const [showVoiceTranscribeDialog, setShowVoiceTranscribeDialog] = useState(false)
+  const [autoTranscribeVoiceEnabled, setAutoTranscribeVoiceEnabled] = useState(false)
   const [pendingVoiceTranscriptRequest, setPendingVoiceTranscriptRequest] = useState<{ sessionId: string; messageId: string } | null>(null)
   const [inProgressExportSessionIds, setInProgressExportSessionIds] = useState<Set<string>>(new Set())
   const [isPreparingExportDialog, setIsPreparingExportDialog] = useState(false)
@@ -877,8 +913,36 @@ function ChatPage(props: ChatPageProps) {
   const [tempFields, setTempFields] = useState<XmlField[]>([])
 
   // 批量语音转文字相关状态（进度/结果 由全局 store 管理）
-  const { isBatchTranscribing, progress: batchTranscribeProgress, showToast: showBatchProgress, startTranscribe, updateProgress, finishTranscribe, setShowToast: setShowBatchProgress } = useBatchTranscribeStore()
-  const { isBatchDecrypting, progress: batchDecryptProgress, startDecrypt, updateProgress: updateDecryptProgress, finishDecrypt, setShowToast: setShowBatchDecryptToast } = useBatchImageDecryptStore()
+  const {
+    isBatchTranscribing,
+    batchTranscribeProgress,
+    startTranscribe,
+    updateProgress,
+    finishTranscribe,
+    setShowBatchProgress
+  } = useBatchTranscribeStore(useShallow((state) => ({
+    isBatchTranscribing: state.isBatchTranscribing,
+    batchTranscribeProgress: state.progress,
+    startTranscribe: state.startTranscribe,
+    updateProgress: state.updateProgress,
+    finishTranscribe: state.finishTranscribe,
+    setShowBatchProgress: state.setShowToast
+  })))
+  const {
+    isBatchDecrypting,
+    batchDecryptProgress,
+    startDecrypt,
+    updateDecryptProgress,
+    finishDecrypt,
+    setShowBatchDecryptToast
+  } = useBatchImageDecryptStore(useShallow((state) => ({
+    isBatchDecrypting: state.isBatchDecrypting,
+    batchDecryptProgress: state.progress,
+    startDecrypt: state.startDecrypt,
+    updateDecryptProgress: state.updateProgress,
+    finishDecrypt: state.finishDecrypt,
+    setShowBatchDecryptToast: state.setShowToast
+  })))
   const [showBatchConfirm, setShowBatchConfirm] = useState(false)
   const [batchVoiceCount, setBatchVoiceCount] = useState(0)
   const [batchVoiceMessages, setBatchVoiceMessages] = useState<Message[] | null>(null)
@@ -943,8 +1007,6 @@ function ChatPage(props: ChatPageProps) {
   const sessionSwitchRequestSeqRef = useRef(0)
   const initialLoadRequestedSessionRef = useRef<string | null>(null)
   const prevSessionRef = useRef<string | null>(null)
-  const isLoadingMessagesRef = useRef(false)
-  const isLoadingMoreRef = useRef(false)
   const isConnectedRef = useRef(false)
   const isRefreshingRef = useRef(false)
   const searchKeywordRef = useRef('')
@@ -2224,7 +2286,6 @@ function ChatPage(props: ChatPageProps) {
     setIsLoadingGroupMembers(false)
     setCurrentSession(null)
     setSessions([])
-    setFilteredSessions([])
     setMessages([])
     setSearchKeyword('')
     setConnectionError(null)
@@ -2243,7 +2304,6 @@ function ChatPage(props: ChatPageProps) {
     setConnecting,
     setConnectionError,
     setCurrentSession,
-    setFilteredSessions,
     setHasMoreLater,
     setHasMoreMessages,
     setMessages,
@@ -2253,6 +2313,24 @@ function ChatPage(props: ChatPageProps) {
     setShowGroupMembersPanel,
     setSessions
   ])
+
+  useEffect(() => {
+    let canceled = false
+    void configService.getAutoTranscribeVoice()
+      .then((enabled) => {
+        if (!canceled) {
+          setAutoTranscribeVoiceEnabled(Boolean(enabled))
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setAutoTranscribeVoiceEnabled(false)
+        }
+      })
+    return () => {
+      canceled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -2270,6 +2348,8 @@ function ChatPage(props: ChatPageProps) {
   // 同步 currentSessionId 到 ref
   useEffect(() => {
     currentSessionRef.current = currentSessionId
+    topRangeLoadLockRef.current = false
+    bottomRangeLoadLockRef.current = false
   }, [currentSessionId])
 
   const hydrateSessionStatuses = useCallback(async (sessionList: ChatSession[]) => {
@@ -2611,7 +2691,11 @@ function ChatPage(props: ChatPageProps) {
           flashNewMessages(newOnes.map(getMessageKey))
           // 滚动到底部
           requestAnimationFrame(() => {
-            if (messageListRef.current) {
+            const latestMessages = useChatStore.getState().messages || []
+            const lastIndex = latestMessages.length - 1
+            if (lastIndex >= 0 && messageVirtuosoRef.current) {
+              messageVirtuosoRef.current.scrollToIndex({ index: lastIndex, align: 'end', behavior: 'auto' })
+            } else if (messageListRef.current) {
               messageListRef.current.scrollTop = messageListRef.current.scrollHeight
             }
           })
@@ -2660,7 +2744,11 @@ function ChatPage(props: ChatPageProps) {
         flashNewMessages(newMessages.map(getMessageKey))
         // 滚动到底部
         requestAnimationFrame(() => {
-          if (messageListRef.current) {
+          const currentMessages = useChatStore.getState().messages || []
+          const lastIndex = currentMessages.length - 1
+          if (lastIndex >= 0 && messageVirtuosoRef.current) {
+            messageVirtuosoRef.current.scrollToIndex({ index: lastIndex, align: 'end', behavior: 'auto' })
+          } else if (messageListRef.current) {
             messageListRef.current.scrollTop = messageListRef.current.scrollHeight
           }
         })
@@ -2739,7 +2827,16 @@ function ChatPage(props: ChatPageProps) {
       setLoadingMore(true)
     }
 
-    // 记录加载前的第一条消息元素
+    const visibleRange = visibleMessageRangeRef.current
+    const visibleStartIndex = Math.min(
+      Math.max(visibleRange.startIndex, 0),
+      Math.max(messages.length - 1, 0)
+    )
+    const anchorMessageKeyBeforePrepend = offset > 0 && messages.length > 0
+      ? getMessageKey(messages[visibleStartIndex])
+      : null
+
+    // 记录加载前的第一条消息元素（非虚拟列表回退路径）
     const firstMsgEl = listEl?.querySelector('.message-wrapper') as HTMLElement | null
 
     try {
@@ -2792,13 +2889,21 @@ function ChatPage(props: ChatPageProps) {
 
           // 日期跳转时滚动到顶部，否则滚动到底部
           requestAnimationFrame(() => {
-            if (messageListRef.current) {
-              if (isDateJumpRef.current) {
+            if (isDateJumpRef.current) {
+              if (messageVirtuosoRef.current && result.messages.length > 0) {
+                messageVirtuosoRef.current.scrollToIndex({ index: 0, align: 'start', behavior: 'auto' })
+              } else if (messageListRef.current) {
                 messageListRef.current.scrollTop = 0
-                isDateJumpRef.current = false
-              } else {
-                messageListRef.current.scrollTop = messageListRef.current.scrollHeight
               }
+              isDateJumpRef.current = false
+              return
+            }
+
+            const lastIndex = result.messages.length - 1
+            if (lastIndex >= 0 && messageVirtuosoRef.current) {
+              messageVirtuosoRef.current.scrollToIndex({ index: lastIndex, align: 'end', behavior: 'auto' })
+            } else if (messageListRef.current) {
+              messageListRef.current.scrollTop = messageListRef.current.scrollHeight
             }
           })
         } else {
@@ -2816,12 +2921,27 @@ function ChatPage(props: ChatPageProps) {
             }
           }
 
-          // 加载更多后保持位置：让之前的第一条消息保持在原来的视觉位置
-          if (firstMsgEl && listEl) {
-            requestAnimationFrame(() => {
+          // 加载更早消息后保持视口锚点，避免跳屏
+          requestAnimationFrame(() => {
+            if (messageVirtuosoRef.current) {
+              if (anchorMessageKeyBeforePrepend) {
+                const latestMessages = useChatStore.getState().messages || []
+                const anchorIndex = latestMessages.findIndex((msg) => getMessageKey(msg) === anchorMessageKeyBeforePrepend)
+                if (anchorIndex >= 0) {
+                  messageVirtuosoRef.current.scrollToIndex({ index: anchorIndex, align: 'start', behavior: 'auto' })
+                  return
+                }
+              }
+              if (result.messages.length > 0) {
+                messageVirtuosoRef.current.scrollToIndex({ index: result.messages.length, align: 'start', behavior: 'auto' })
+              }
+              return
+            }
+
+            if (firstMsgEl && listEl) {
               listEl.scrollTop = firstMsgEl.offsetTop - 80
-            })
-          }
+            }
+          })
         }
         // 日期跳转(ascending=true)：不往上加载更早的，往下加载更晚的
         if (ascending) {
@@ -3775,43 +3895,66 @@ function ChatPage(props: ChatPageProps) {
     setGlobalMsgAuthoritativeSessionCount(0)
   }, [])
 
-  // 滚动加载更多 + 显示/隐藏回到底部按钮（优化：节流，避免频繁执行）
-  const scrollTimeoutRef = useRef<number | null>(null)
-  const handleScroll = useCallback(() => {
-    if (!messageListRef.current) return
-
-    // 节流：延迟执行，避免滚动时频繁计算
-    if (scrollTimeoutRef.current) {
-      cancelAnimationFrame(scrollTimeoutRef.current)
+  const handleMessageRangeChanged = useCallback((range: { startIndex: number; endIndex: number }) => {
+    visibleMessageRangeRef.current = range
+    const total = messages.length
+    if (total <= 0) {
+      setShowScrollToBottom(prev => (prev ? false : prev))
+      return
     }
 
-    scrollTimeoutRef.current = requestAnimationFrame(() => {
-      if (!messageListRef.current) return
+    const remaining = (total - 1) - range.endIndex
+    const shouldShowScrollButton = remaining > 3
+    setShowScrollToBottom(prev => (prev === shouldShowScrollButton ? prev : shouldShowScrollButton))
 
-      const { scrollTop, clientHeight, scrollHeight } = messageListRef.current
+    if (
+      range.startIndex <= 2 &&
+      !topRangeLoadLockRef.current &&
+      !isLoadingMore &&
+      !isLoadingMessages &&
+      hasMoreMessages &&
+      currentSessionId
+    ) {
+      topRangeLoadLockRef.current = true
+      void loadMessages(currentSessionId, currentOffset, jumpStartTime, jumpEndTime)
+    }
 
-      // 显示回到底部按钮：距离底部超过 300px
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-      setShowScrollToBottom(distanceFromBottom > 300)
+    if (
+      range.endIndex >= total - 3 &&
+      !bottomRangeLoadLockRef.current &&
+      !isLoadingMore &&
+      !isLoadingMessages &&
+      hasMoreLater &&
+      currentSessionId
+    ) {
+      bottomRangeLoadLockRef.current = true
+      void loadLaterMessages()
+    }
+  }, [
+    messages.length,
+    isLoadingMore,
+    isLoadingMessages,
+    hasMoreMessages,
+    hasMoreLater,
+    currentSessionId,
+    currentOffset,
+    jumpStartTime,
+    jumpEndTime,
+    loadMessages,
+    loadLaterMessages
+  ])
 
-      // 预加载：当滚动到顶部 30% 区域时开始加载
-      if (!isLoadingMore && !isLoadingMessages && hasMoreMessages && currentSessionId) {
-        const threshold = clientHeight * 0.3
-        if (scrollTop < threshold) {
-          loadMessages(currentSessionId, currentOffset, jumpStartTime, jumpEndTime)
-        }
-      }
+  const handleMessageAtBottomStateChange = useCallback((atBottom: boolean) => {
+    if (!atBottom) {
+      bottomRangeLoadLockRef.current = false
+    }
+  }, [])
 
-      // 预加载更晚的消息
-      if (!isLoadingMore && !isLoadingMessages && hasMoreLater && currentSessionId) {
-        const threshold = clientHeight * 0.3
-        const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-        if (distanceFromBottom < threshold) {
-          loadLaterMessages()
-        }
-      }
-    })
-  }, [isLoadingMore, isLoadingMessages, hasMoreMessages, hasMoreLater, currentSessionId, currentOffset, jumpStartTime, jumpEndTime, loadMessages, loadLaterMessages])
+  const handleMessageAtTopStateChange = useCallback((atTop: boolean) => {
+    if (!atTop) {
+      topRangeLoadLockRef.current = false
+    }
+  }, [])
 
 
   const isSameSession = useCallback((prev: ChatSession, next: ChatSession): boolean => {
@@ -3885,13 +4028,22 @@ function ChatPage(props: ChatPageProps) {
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
+    const lastIndex = messages.length - 1
+    if (lastIndex >= 0 && messageVirtuosoRef.current) {
+      messageVirtuosoRef.current.scrollToIndex({
+        index: lastIndex,
+        align: 'end',
+        behavior: 'smooth'
+      })
+      return
+    }
     if (messageListRef.current) {
       messageListRef.current.scrollTo({
         top: messageListRef.current.scrollHeight,
         behavior: 'smooth'
       })
     }
-  }, [])
+  }, [messages.length])
 
   // 拖动调节侧边栏宽度
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -4021,9 +4173,11 @@ function ChatPage(props: ChatPageProps) {
   }, [sessions])
 
   useEffect(() => {
-    isLoadingMessagesRef.current = isLoadingMessages
-    isLoadingMoreRef.current = isLoadingMore
-  }, [isLoadingMessages, isLoadingMore])
+    if (!isLoadingMore) {
+      topRangeLoadLockRef.current = false
+      bottomRangeLoadLockRef.current = false
+    }
+  }, [isLoadingMore])
 
   useEffect(() => {
     if (initialRevealTimerRef.current !== null) {
@@ -4195,17 +4349,16 @@ function ChatPage(props: ChatPageProps) {
   }, [sessions, persistSessionListCache])
 
   // 普通视图：隐藏 isFolded 的群，保留 placeholder_foldgroup 入口
-  useEffect(() => {
+  const filteredSessions = useMemo(() => {
     if (!Array.isArray(sessions)) {
-      setFilteredSessions([])
-      return
+      return []
     }
 
     // 检查是否有折叠的群聊
     const foldedGroups = sessions.filter(s => s.isFolded && !s.username.toLowerCase().includes('placeholder_foldgroup'))
     const hasFoldedGroups = foldedGroups.length > 0
 
-    let visible = sessions.filter(s => {
+    const visible = sessions.filter(s => {
       if (s.isFolded && !s.username.toLowerCase().includes('placeholder_foldgroup')) return false
       return true
     })
@@ -4246,37 +4399,34 @@ function ChatPage(props: ChatPageProps) {
     }
 
     if (!searchKeyword.trim()) {
-      setFilteredSessions(visible)
-      return
+      return visible
     }
     const lower = searchKeyword.toLowerCase()
-    setFilteredSessions(visible
-        .filter(s => {
-          const matchedByName = s.displayName?.toLowerCase().includes(lower)
-          const matchedByUsername = s.username.toLowerCase().includes(lower)
-          const matchedByAlias = s.alias?.toLowerCase().includes(lower)
-          return matchedByName || matchedByUsername || matchedByAlias
-        })
-        .map(s => {
-          const matchedByName = s.displayName?.toLowerCase().includes(lower)
-          const matchedByUsername = s.username.toLowerCase().includes(lower)
-          const matchedByAlias = s.alias?.toLowerCase().includes(lower)
+    return visible
+      .filter(s => {
+        const matchedByName = s.displayName?.toLowerCase().includes(lower)
+        const matchedByUsername = s.username.toLowerCase().includes(lower)
+        const matchedByAlias = s.alias?.toLowerCase().includes(lower)
+        return matchedByName || matchedByUsername || matchedByAlias
+      })
+      .map(s => {
+        const matchedByName = s.displayName?.toLowerCase().includes(lower)
+        const matchedByUsername = s.username.toLowerCase().includes(lower)
+        const matchedByAlias = s.alias?.toLowerCase().includes(lower)
 
-          let matchedField: 'wxid' | 'alias' | 'name' | undefined = undefined
-          
-          if (matchedByUsername && !matchedByName && !matchedByAlias) {
-            matchedField = 'wxid'
-          } else if (matchedByAlias && !matchedByName && !matchedByUsername) {
-            matchedField = 'alias'
-          } else if (matchedByName && !matchedByUsername && !matchedByAlias) {
-            matchedField = 'name'
-          }
+        let matchedField: 'wxid' | 'alias' | 'name' | undefined = undefined
 
-          // ✅ 关键点：返回一个新对象，解耦全局状态
-          return { ...s, matchedField }
-        })
-    )
-  }, [sessions, searchKeyword, setFilteredSessions])
+        if (matchedByUsername && !matchedByName && !matchedByAlias) {
+          matchedField = 'wxid'
+        } else if (matchedByAlias && !matchedByName && !matchedByUsername) {
+          matchedField = 'alias'
+        } else if (matchedByName && !matchedByUsername && !matchedByAlias) {
+          matchedField = 'name'
+        }
+
+        return { ...s, matchedField }
+      })
+  }, [sessions, searchKeyword])
 
   // 折叠群列表（独立计算，供折叠 panel 使用）
   const foldedSessions = useMemo(() => {
@@ -4313,6 +4463,25 @@ function ChatPage(props: ChatPageProps) {
           return { ...s, matchedField }
         })
   }, [sessions, searchKeyword, foldedView])
+
+  const sessionLookupMap = useMemo(() => {
+    const map = new Map<string, ChatSession>()
+    for (const session of sessions) {
+      const username = String(session.username || '').trim()
+      if (!username) continue
+      map.set(username, session)
+    }
+    return map
+  }, [sessions])
+  const groupedGlobalMsgResults = useMemo(() => {
+    const grouped = globalMsgResults.reduce((acc, msg) => {
+      const sessionId = (msg as any).sessionId || '未知'
+      if (!acc[sessionId]) acc[sessionId] = []
+      acc[sessionId].push(msg)
+      return acc
+    }, {} as Record<string, Message[]>)
+    return Object.entries(grouped)
+  }, [globalMsgResults])
 
   const hasSessionRecords = Array.isArray(sessions) && sessions.length > 0
   const shouldShowSessionsSkeleton = isLoadingSessions && !hasSessionRecords
@@ -5080,6 +5249,85 @@ function ChatPage(props: ChatPageProps) {
     }
   }
 
+  const messageVirtuosoComponents = useMemo(() => ({
+    Header: () => (
+      hasMoreMessages ? (
+        <div className={`load-more-trigger ${isLoadingMore ? 'loading' : ''}`}>
+          {isLoadingMore ? (
+            <>
+              <Loader2 size={14} />
+              <span>加载更多...</span>
+            </>
+          ) : (
+            <span>向上滚动加载更多</span>
+          )}
+        </div>
+      ) : null
+    ),
+    Footer: () => (
+      hasMoreLater ? (
+        <div className={`load-more-trigger later ${isLoadingMore ? 'loading' : ''}`}>
+          {isLoadingMore ? (
+            <>
+              <Loader2 size={14} />
+              <span>正在加载后续消息...</span>
+            </>
+          ) : (
+            <span>向下滚动查看更新消息</span>
+          )}
+        </div>
+      ) : null
+    )
+  }), [hasMoreMessages, hasMoreLater, isLoadingMore])
+
+  const renderMessageListItem = useCallback((index: number, msg: Message) => {
+    const prevMsg = index > 0 ? messages[index - 1] : undefined
+    const showDateDivider = shouldShowDateDivider(msg, prevMsg)
+    const showTime = !prevMsg || (msg.createTime - prevMsg.createTime > 300)
+    const isSent = msg.isSend === 1
+    const isSystem = isSystemMessage(msg.localType)
+    const wrapperClass = isSystem ? 'system' : (isSent ? 'sent' : 'received')
+    const messageKey = getMessageKey(msg)
+
+    return (
+      <div className={`message-wrapper ${wrapperClass} ${highlightedMessageSet.has(messageKey) ? 'new-message' : ''}`}>
+        {showDateDivider && (
+          <div className="date-divider">
+            <span>{formatDateDivider(msg.createTime)}</span>
+          </div>
+        )}
+        <MemoMessageBubble
+          message={msg}
+          session={currentSession}
+          showTime={!showDateDivider && showTime}
+          myAvatarUrl={myAvatarUrl}
+          isGroupChat={isCurrentSessionGroup}
+          autoTranscribeVoiceEnabled={autoTranscribeVoiceEnabled}
+          onRequireModelDownload={handleRequireModelDownload}
+          onContextMenu={handleContextMenu}
+          isSelectionMode={isSelectionMode}
+          messageKey={messageKey}
+          isSelected={selectedMessages.has(messageKey)}
+          onToggleSelection={handleToggleSelection}
+        />
+      </div>
+    )
+  }, [
+    messages,
+    highlightedMessageSet,
+    getMessageKey,
+    formatDateDivider,
+    currentSession,
+    myAvatarUrl,
+    isCurrentSessionGroup,
+    autoTranscribeVoiceEnabled,
+    handleRequireModelDownload,
+    handleContextMenu,
+    isSelectionMode,
+    selectedMessages,
+    handleToggleSelection
+  ])
+
   return (
     <div className={`chat-page ${isResizing ? 'resizing' : ''} ${standaloneSessionWindow ? 'standalone session-only' : ''}`}>
       {/* 自定义删除确认对话框 */}
@@ -5232,17 +5480,10 @@ function ChatPage(props: ChatPageProps) {
                   )}
                 </div>
                 <div className="search-results-list">
-                  {Object.entries(
-                    globalMsgResults.reduce((acc, msg) => {
-                      const sessionId = (msg as any).sessionId || '未知';
-                      if (!acc[sessionId]) acc[sessionId] = [];
-                      acc[sessionId].push(msg);
-                      return acc;
-                    }, {} as Record<string, Message[]>)
-                  ).map(([sessionId, messages]) => {
-                    const session = sessions.find(s => s.username === sessionId);
-                    const firstMsg = messages[0];
-                    const count = messages.length;
+                  {groupedGlobalMsgResults.map(([sessionId, messages]) => {
+                    const session = sessionLookupMap.get(sessionId)
+                    const firstMsg = messages[0]
+                    const count = messages.length
                     return (
                       <div
                         key={sessionId}
@@ -5276,7 +5517,7 @@ function ChatPage(props: ChatPageProps) {
                           )}
                         </div>
                       </div>
-                    );
+                    )
                   })}
                 </div>
               </>
@@ -5661,77 +5902,27 @@ function ChatPage(props: ChatPageProps) {
               )}
               <div
                 className={`message-list ${hasInitialMessages ? 'loaded' : 'loading'}`}
-                ref={messageListRef}
-                onScroll={handleScroll}
+                ref={handleMessageListScrollParentRef}
               >
-                {hasMoreMessages && (
-                  <div className={`load-more-trigger ${isLoadingMore ? 'loading' : ''}`}>
-                    {isLoadingMore ? (
-                      <>
-                        <Loader2 size={14} />
-                        <span>加载更多...</span>
-                      </>
-                    ) : (
-                      <span>向上滚动加载更多</span>
-                    )}
-                  </div>
-                )}
-
-                {!isLoadingMessages && messages.length === 0 && !hasMoreMessages && (
+                {!isLoadingMessages && messages.length === 0 && !hasMoreMessages ? (
                   <div className="empty-chat-inline">
                     <MessageSquare size={32} />
                     <span>该联系人没有聊天记录</span>
                   </div>
-                )}
-
-                {(messages || []).map((msg, index) => {
-                  const prevMsg = index > 0 ? messages[index - 1] : undefined
-                  const showDateDivider = shouldShowDateDivider(msg, prevMsg)
-
-                  // 显示时间:第一条消息,或者与上一条消息间隔超过5分钟
-                  const showTime = !prevMsg || (msg.createTime - prevMsg.createTime > 300)
-                  const isSent = msg.isSend === 1
-                  const isSystem = isSystemMessage(msg.localType)
-
-                  // 系统消息居中显示
-                  const wrapperClass = isSystem ? 'system' : (isSent ? 'sent' : 'received')
-
-                  const messageKey = getMessageKey(msg)
-                  return (
-                    <div key={messageKey} className={`message-wrapper ${wrapperClass} ${highlightedMessageSet.has(messageKey) ? 'new-message' : ''}`}>
-                      {showDateDivider && (
-                        <div className="date-divider">
-                          <span>{formatDateDivider(msg.createTime)}</span>
-                        </div>
-                      )}
-                      <MessageBubble
-                        message={msg}
-                        session={currentSession}
-                        showTime={!showDateDivider && showTime}
-                        myAvatarUrl={myAvatarUrl}
-                        isGroupChat={isCurrentSessionGroup}
-                        onRequireModelDownload={handleRequireModelDownload}
-                        onContextMenu={handleContextMenu}
-                        isSelectionMode={isSelectionMode}
-                        messageKey={messageKey}
-                        isSelected={selectedMessages.has(messageKey)}
-                        onToggleSelection={handleToggleSelection}
-                      />
-                    </div>
-                  )
-                })}
-
-                {hasMoreLater && (
-                  <div className={`load-more-trigger later ${isLoadingMore ? 'loading' : ''}`}>
-                    {isLoadingMore ? (
-                      <>
-                        <Loader2 size={14} />
-                        <span>正在加载后续消息...</span>
-                      </>
-                    ) : (
-                      <span>向下滚动查看更新消息</span>
-                    )}
-                  </div>
+                ) : (
+                  <Virtuoso
+                    ref={messageVirtuosoRef}
+                    className="message-virtuoso"
+                    customScrollParent={messageListScrollParent ?? undefined}
+                    data={messages}
+                    overscan={360}
+                    atBottomStateChange={handleMessageAtBottomStateChange}
+                    atTopStateChange={handleMessageAtTopStateChange}
+                    rangeChanged={handleMessageRangeChanged}
+                    computeItemKey={(_, msg) => getMessageKey(msg)}
+                    components={messageVirtuosoComponents}
+                    itemContent={renderMessageListItem}
+                  />
                 )}
 
                 {/* 回到底部按钮 */}
@@ -6665,6 +6856,7 @@ function MessageBubble({
   showTime,
   myAvatarUrl,
   isGroupChat,
+  autoTranscribeVoiceEnabled,
   onRequireModelDownload,
   onContextMenu,
   isSelectionMode,
@@ -6677,6 +6869,7 @@ function MessageBubble({
   showTime?: boolean;
   myAvatarUrl?: string;
   isGroupChat?: boolean;
+  autoTranscribeVoiceEnabled?: boolean;
   onRequireModelDownload?: (sessionId: string, messageId: string) => void;
   onContextMenu?: (e: React.MouseEvent, message: Message) => void;
   isSelectionMode?: boolean;
@@ -6737,7 +6930,6 @@ function MessageBubble({
   const [voiceTranscriptLoading, setVoiceTranscriptLoading] = useState(false)
   const [voiceTranscriptError, setVoiceTranscriptError] = useState(false)
   const voiceTranscriptRequestedRef = useRef(false)
-  const [autoTranscribeVoice, setAutoTranscribeVoice] = useState(true)
   const [voiceCurrentTime, setVoiceCurrentTime] = useState(0)
   const [voiceDuration, setVoiceDuration] = useState(0)
   const [voiceWaveform, setVoiceWaveform] = useState<number[]>([])
@@ -6786,15 +6978,6 @@ function MessageBubble({
       })
     }
   }, [isVideo, message.videoMd5, message.content, message.parsedContent])
-
-  // 加载自动转文字配置
-  useEffect(() => {
-    const loadConfig = async () => {
-      const enabled = await configService.getAutoTranscribeVoice()
-      setAutoTranscribeVoice(enabled)
-    }
-    loadConfig()
-  }, [])
 
   const formatTime = (timestamp: number): string => {
     if (!Number.isFinite(timestamp) || timestamp <= 0) return '未知时间'
@@ -7427,25 +7610,14 @@ function MessageBubble({
     void requestVideoInfo()
   }, [isVideo, isVideoVisible, videoInfo, requestVideoInfo])
 
-
-  // 根据设置决定是否自动转写
-  const [autoTranscribeEnabled, setAutoTranscribeEnabled] = useState(false)
-
   useEffect(() => {
-    window.electronAPI.config.get('autoTranscribeVoice').then((value: unknown) => {
-      setAutoTranscribeEnabled(value === true)
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!autoTranscribeEnabled) return
+    if (!autoTranscribeVoiceEnabled) return
     if (!isVoice) return
     if (!voiceDataUrl) return
-    if (!autoTranscribeVoice) return // 如果自动转文字已关闭，不自动转文字
     if (voiceTranscriptError) return
     if (voiceTranscriptLoading || voiceTranscript !== undefined || voiceTranscriptRequestedRef.current) return
     void requestVoiceTranscript()
-  }, [autoTranscribeEnabled, isVoice, voiceDataUrl, voiceTranscript, voiceTranscriptError, voiceTranscriptLoading, requestVoiceTranscript])
+  }, [autoTranscribeVoiceEnabled, isVoice, voiceDataUrl, voiceTranscript, voiceTranscriptError, voiceTranscriptLoading, requestVoiceTranscript])
 
   // Selection mode handling removed from here to allow normal rendering
   // We will wrap the output instead
@@ -8688,5 +8860,25 @@ function MessageBubble({
     </>
   )
 }
+
+const MemoMessageBubble = React.memo(MessageBubble, (prevProps, nextProps) => {
+  if (prevProps.message !== nextProps.message) return false
+  if (prevProps.messageKey !== nextProps.messageKey) return false
+  if (prevProps.showTime !== nextProps.showTime) return false
+  if (prevProps.myAvatarUrl !== nextProps.myAvatarUrl) return false
+  if (prevProps.isGroupChat !== nextProps.isGroupChat) return false
+  if (prevProps.autoTranscribeVoiceEnabled !== nextProps.autoTranscribeVoiceEnabled) return false
+  if (prevProps.isSelectionMode !== nextProps.isSelectionMode) return false
+  if (prevProps.isSelected !== nextProps.isSelected) return false
+  if (prevProps.onRequireModelDownload !== nextProps.onRequireModelDownload) return false
+  if (prevProps.onContextMenu !== nextProps.onContextMenu) return false
+  if (prevProps.onToggleSelection !== nextProps.onToggleSelection) return false
+
+  return (
+    prevProps.session.username === nextProps.session.username &&
+    prevProps.session.displayName === nextProps.session.displayName &&
+    prevProps.session.avatarUrl === nextProps.session.avatarUrl
+  )
+})
 
 export default ChatPage

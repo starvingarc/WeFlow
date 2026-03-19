@@ -2332,7 +2332,8 @@ class ExportService {
         sessionId,
         imageMd5,
         imageDatName,
-        force: true  // 导出优先高清，失败再回退缩略图
+        force: true,  // 导出优先高清，失败再回退缩略图
+        preferFilePath: true
       })
 
       if (!result.success || !result.localPath) {
@@ -2341,7 +2342,8 @@ class ExportService {
         const thumbResult = await imageDecryptService.resolveCachedImage({
           sessionId,
           imageMd5,
-          imageDatName
+          imageDatName,
+          preferFilePath: true
         })
         if (thumbResult.success && thumbResult.localPath) {
           console.log(`[Export] 使用缩略图替代 (localId=${msg.localId}): ${thumbResult.localPath}`)
@@ -2402,6 +2404,55 @@ class ExportService {
       console.error(`[Export] 导出图片异常 (localId=${msg.localId}):`, e, `→ 将显示 [图片] 占位符`)
       return null
     }
+  }
+
+  private async preloadMediaLookupCaches(
+    _sessionId: string,
+    messages: any[],
+    options: { exportImages?: boolean; exportVideos?: boolean },
+    control?: ExportTaskControl
+  ): Promise<void> {
+    if (!Array.isArray(messages) || messages.length === 0) return
+
+    const md5Pattern = /^[a-f0-9]{32}$/i
+    const imageMd5Set = new Set<string>()
+    const videoMd5Set = new Set<string>()
+
+    let scanIndex = 0
+    for (const msg of messages) {
+      if ((scanIndex++ & 0x7f) === 0) {
+        this.throwIfStopRequested(control)
+      }
+
+      if (options.exportImages && msg?.localType === 3) {
+        const imageMd5 = String(msg?.imageMd5 || '').trim().toLowerCase()
+        if (imageMd5) {
+          imageMd5Set.add(imageMd5)
+        } else {
+          const imageDatName = String(msg?.imageDatName || '').trim().toLowerCase()
+          if (md5Pattern.test(imageDatName)) {
+            imageMd5Set.add(imageDatName)
+          }
+        }
+      }
+
+      if (options.exportVideos && msg?.localType === 43) {
+        const videoMd5 = String(msg?.videoMd5 || '').trim().toLowerCase()
+        if (videoMd5) videoMd5Set.add(videoMd5)
+      }
+    }
+
+    const preloadTasks: Array<Promise<void>> = []
+    if (imageMd5Set.size > 0) {
+      preloadTasks.push(imageDecryptService.preloadImageHardlinkMd5s(Array.from(imageMd5Set)))
+    }
+    if (videoMd5Set.size > 0) {
+      preloadTasks.push(videoService.preloadVideoHardlinkMd5s(Array.from(videoMd5Set)))
+    }
+    if (preloadTasks.length === 0) return
+
+    await Promise.all(preloadTasks.map((task) => task.catch(() => { })))
+    this.throwIfStopRequested(control)
   }
 
   /**
@@ -3644,6 +3695,10 @@ class ExportService {
       const mediaDirCache = new Set<string>()
 
       if (mediaMessages.length > 0) {
+        await this.preloadMediaLookupCaches(sessionId, mediaMessages, {
+          exportImages: options.exportImages,
+          exportVideos: options.exportVideos
+        }, control)
         const voiceMediaMessages = mediaMessages.filter(msg => msg.localType === 34)
         if (voiceMediaMessages.length > 0) {
           await this.preloadVoiceWavCache(sessionId, voiceMediaMessages, control)
@@ -4127,6 +4182,10 @@ class ExportService {
       const mediaDirCache = new Set<string>()
 
       if (mediaMessages.length > 0) {
+        await this.preloadMediaLookupCaches(sessionId, mediaMessages, {
+          exportImages: options.exportImages,
+          exportVideos: options.exportVideos
+        }, control)
         const voiceMediaMessages = mediaMessages.filter(msg => msg.localType === 34)
         if (voiceMediaMessages.length > 0) {
           await this.preloadVoiceWavCache(sessionId, voiceMediaMessages, control)
@@ -4934,6 +4993,10 @@ class ExportService {
       const mediaDirCache = new Set<string>()
 
       if (mediaMessages.length > 0) {
+        await this.preloadMediaLookupCaches(sessionId, mediaMessages, {
+          exportImages: options.exportImages,
+          exportVideos: options.exportVideos
+        }, control)
         const voiceMediaMessages = mediaMessages.filter(msg => msg.localType === 34)
         if (voiceMediaMessages.length > 0) {
           await this.preloadVoiceWavCache(sessionId, voiceMediaMessages, control)
@@ -5600,6 +5663,10 @@ class ExportService {
       const mediaDirCache = new Set<string>()
 
       if (mediaMessages.length > 0) {
+        await this.preloadMediaLookupCaches(sessionId, mediaMessages, {
+          exportImages: options.exportImages,
+          exportVideos: options.exportVideos
+        }, control)
         const voiceMediaMessages = mediaMessages.filter(msg => msg.localType === 34)
         if (voiceMediaMessages.length > 0) {
           await this.preloadVoiceWavCache(sessionId, voiceMediaMessages, control)
@@ -5938,6 +6005,10 @@ class ExportService {
       const mediaDirCache = new Set<string>()
 
       if (mediaMessages.length > 0) {
+        await this.preloadMediaLookupCaches(sessionId, mediaMessages, {
+          exportImages: options.exportImages,
+          exportVideos: options.exportVideos
+        }, control)
         const voiceMediaMessages = mediaMessages.filter(msg => msg.localType === 34)
         if (voiceMediaMessages.length > 0) {
           await this.preloadVoiceWavCache(sessionId, voiceMediaMessages, control)
@@ -6344,6 +6415,10 @@ class ExportService {
       const mediaCache = new Map<string, MediaExportItem | null>()
 
       if (mediaMessages.length > 0) {
+        await this.preloadMediaLookupCaches(sessionId, mediaMessages, {
+          exportImages: options.exportImages,
+          exportVideos: options.exportVideos
+        }, control)
         const voiceMediaMessages = mediaMessages.filter(msg => msg.localType === 34)
         if (voiceMediaMessages.length > 0) {
           await this.preloadVoiceWavCache(sessionId, voiceMediaMessages, control)

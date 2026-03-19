@@ -108,6 +108,9 @@ export class WcdbCore {
 
   private avatarUrlCache: Map<string, { url?: string; updatedAt: number }> = new Map()
   private readonly avatarCacheTtlMs = 10 * 60 * 1000
+  private imageHardlinkCache: Map<string, { result: { success: boolean; data?: any; error?: string }; updatedAt: number }> = new Map()
+  private videoHardlinkCache: Map<string, { result: { success: boolean; data?: any; error?: string }; updatedAt: number }> = new Map()
+  private readonly hardlinkCacheTtlMs = 10 * 60 * 1000
   private logTimer: NodeJS.Timeout | null = null
   private lastLogTail: string | null = null
   private lastResolvedLogPath: string | null = null
@@ -1281,6 +1284,52 @@ export class WcdbCore {
     return { begin: normalizedBegin, end: normalizedEnd }
   }
 
+  private makeHardlinkCacheKey(primary: string, secondary?: string | null): string {
+    const a = String(primary || '').trim().toLowerCase()
+    const b = String(secondary || '').trim().toLowerCase()
+    return `${a}\u001f${b}`
+  }
+
+  private readHardlinkCache(
+    cache: Map<string, { result: { success: boolean; data?: any; error?: string }; updatedAt: number }>,
+    key: string
+  ): { success: boolean; data?: any; error?: string } | null {
+    const entry = cache.get(key)
+    if (!entry) return null
+    if (Date.now() - entry.updatedAt > this.hardlinkCacheTtlMs) {
+      cache.delete(key)
+      return null
+    }
+    return this.cloneHardlinkResult(entry.result)
+  }
+
+  private writeHardlinkCache(
+    cache: Map<string, { result: { success: boolean; data?: any; error?: string }; updatedAt: number }>,
+    key: string,
+    result: { success: boolean; data?: any; error?: string }
+  ): void {
+    cache.set(key, {
+      result: this.cloneHardlinkResult(result),
+      updatedAt: Date.now()
+    })
+  }
+
+  private cloneHardlinkResult(result: { success: boolean; data?: any; error?: string }): { success: boolean; data?: any; error?: string } {
+    const data = result.data && typeof result.data === 'object'
+      ? { ...result.data }
+      : result.data
+    return {
+      success: result.success === true,
+      data,
+      error: result.error
+    }
+  }
+
+  private clearHardlinkCaches(): void {
+    this.imageHardlinkCache.clear()
+    this.videoHardlinkCache.clear()
+  }
+
   isReady(): boolean {
     return this.ensureReady()
   }
@@ -1388,6 +1437,7 @@ export class WcdbCore {
       this.currentWxid = null
       this.currentDbStoragePath = null
       this.initialized = false
+      this.clearHardlinkCaches()
       this.stopLogPolling()
     }
   }
@@ -2751,13 +2801,22 @@ export class WcdbCore {
     if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
     if (!this.wcdbResolveImageHardlink) return { success: false, error: '接口未就绪' }
     try {
+      const normalizedMd5 = String(md5 || '').trim().toLowerCase()
+      const normalizedAccountDir = String(accountDir || '').trim()
+      if (!normalizedMd5) return { success: false, error: 'md5 为空' }
+      const cacheKey = this.makeHardlinkCacheKey(normalizedMd5, normalizedAccountDir)
+      const cached = this.readHardlinkCache(this.imageHardlinkCache, cacheKey)
+      if (cached) return cached
+
       const outPtr = [null as any]
-      const result = this.wcdbResolveImageHardlink(this.handle, md5, accountDir || null, outPtr)
+      const result = this.wcdbResolveImageHardlink(this.handle, normalizedMd5, normalizedAccountDir || null, outPtr)
       if (result !== 0 || !outPtr[0]) return { success: false, error: `解析图片 hardlink 失败: ${result}` }
       const jsonStr = this.decodeJsonPtr(outPtr[0])
       if (!jsonStr) return { success: false, error: '解析图片 hardlink 响应失败' }
       const data = JSON.parse(jsonStr) || {}
-      return { success: true, data }
+      const finalResult = { success: true, data }
+      this.writeHardlinkCache(this.imageHardlinkCache, cacheKey, finalResult)
+      return finalResult
     } catch (e) {
       return { success: false, error: String(e) }
     }
@@ -2767,13 +2826,80 @@ export class WcdbCore {
     if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
     if (!this.wcdbResolveVideoHardlinkMd5) return { success: false, error: '接口未就绪' }
     try {
+      const normalizedMd5 = String(md5 || '').trim().toLowerCase()
+      const normalizedDbPath = String(dbPath || '').trim()
+      if (!normalizedMd5) return { success: false, error: 'md5 为空' }
+      const cacheKey = this.makeHardlinkCacheKey(normalizedMd5, normalizedDbPath)
+      const cached = this.readHardlinkCache(this.videoHardlinkCache, cacheKey)
+      if (cached) return cached
+
       const outPtr = [null as any]
-      const result = this.wcdbResolveVideoHardlinkMd5(this.handle, md5, dbPath || null, outPtr)
+      const result = this.wcdbResolveVideoHardlinkMd5(this.handle, normalizedMd5, normalizedDbPath || null, outPtr)
       if (result !== 0 || !outPtr[0]) return { success: false, error: `解析视频 hardlink 失败: ${result}` }
       const jsonStr = this.decodeJsonPtr(outPtr[0])
       if (!jsonStr) return { success: false, error: '解析视频 hardlink 响应失败' }
       const data = JSON.parse(jsonStr) || {}
-      return { success: true, data }
+      const finalResult = { success: true, data }
+      this.writeHardlinkCache(this.videoHardlinkCache, cacheKey, finalResult)
+      return finalResult
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  async resolveImageHardlinkBatch(
+    requests: Array<{ md5: string; accountDir?: string }>
+  ): Promise<{ success: boolean; rows?: Array<{ index: number; md5: string; success: boolean; data?: any; error?: string }>; error?: string }> {
+    if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
+    if (!Array.isArray(requests)) return { success: false, error: '参数错误: requests 必须是数组' }
+    try {
+      const rows: Array<{ index: number; md5: string; success: boolean; data?: any; error?: string }> = []
+      for (let i = 0; i < requests.length; i += 1) {
+        const req = requests[i] || { md5: '' }
+        const normalizedMd5 = String(req.md5 || '').trim().toLowerCase()
+        if (!normalizedMd5) {
+          rows.push({ index: i, md5: '', success: false, error: 'md5 为空' })
+          continue
+        }
+        const result = await this.resolveImageHardlink(normalizedMd5, req.accountDir)
+        rows.push({
+          index: i,
+          md5: normalizedMd5,
+          success: result.success === true,
+          data: result.data,
+          error: result.error
+        })
+      }
+      return { success: true, rows }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  async resolveVideoHardlinkMd5Batch(
+    requests: Array<{ md5: string; dbPath?: string }>
+  ): Promise<{ success: boolean; rows?: Array<{ index: number; md5: string; success: boolean; data?: any; error?: string }>; error?: string }> {
+    if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
+    if (!Array.isArray(requests)) return { success: false, error: '参数错误: requests 必须是数组' }
+    try {
+      const rows: Array<{ index: number; md5: string; success: boolean; data?: any; error?: string }> = []
+      for (let i = 0; i < requests.length; i += 1) {
+        const req = requests[i] || { md5: '' }
+        const normalizedMd5 = String(req.md5 || '').trim().toLowerCase()
+        if (!normalizedMd5) {
+          rows.push({ index: i, md5: '', success: false, error: 'md5 为空' })
+          continue
+        }
+        const result = await this.resolveVideoHardlinkMd5(normalizedMd5, req.dbPath)
+        rows.push({
+          index: i,
+          md5: normalizedMd5,
+          success: result.success === true,
+          data: result.data,
+          error: result.error
+        })
+      }
+      return { success: true, rows }
     } catch (e) {
       return { success: false, error: String(e) }
     }

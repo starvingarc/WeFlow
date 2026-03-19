@@ -242,12 +242,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     preload: (payloads: Array<{ sessionId?: string; imageMd5?: string; imageDatName?: string }>) =>
       ipcRenderer.invoke('image:preload', payloads),
     onUpdateAvailable: (callback: (payload: { cacheKey: string; imageMd5?: string; imageDatName?: string }) => void) => {
-      ipcRenderer.on('image:updateAvailable', (_, payload) => callback(payload))
-      return () => ipcRenderer.removeAllListeners('image:updateAvailable')
+      const listener = (_: unknown, payload: { cacheKey: string; imageMd5?: string; imageDatName?: string }) => callback(payload)
+      ipcRenderer.on('image:updateAvailable', listener)
+      return () => ipcRenderer.removeListener('image:updateAvailable', listener)
     },
     onCacheResolved: (callback: (payload: { cacheKey: string; imageMd5?: string; imageDatName?: string; localPath: string }) => void) => {
-      ipcRenderer.on('image:cacheResolved', (_, payload) => callback(payload))
-      return () => ipcRenderer.removeAllListeners('image:cacheResolved')
+      const listener = (_: unknown, payload: { cacheKey: string; imageMd5?: string; imageDatName?: string; localPath: string }) => callback(payload)
+      ipcRenderer.on('image:cacheResolved', listener)
+      return () => ipcRenderer.removeListener('image:cacheResolved', listener)
     }
   },
 
