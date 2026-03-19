@@ -95,7 +95,6 @@
     "linux": {
       "icon": "public/icon.png",
       "target": [
-        "pacman",
         "deb",
         "tar.gz"
       ],
